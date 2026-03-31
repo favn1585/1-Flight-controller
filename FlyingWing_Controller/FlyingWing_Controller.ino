@@ -59,6 +59,17 @@ bool armed = false;
 uint8_t crsfBuf[CRSF_MAX_PACKET];
 uint8_t crsfIdx = 0;
 
+// CRSF uses DVB-S2 CRC-8 (poly 0xD5) over [type + payload], not including CRC byte.
+static uint8_t crsfCRC8(const uint8_t *buf, uint8_t len) {
+  uint8_t crc = 0;
+  while (len--) {
+    crc ^= *buf++;
+    for (uint8_t i = 0; i < 8; i++)
+      crc = (crc & 0x80) ? (crc << 1) ^ 0xD5 : crc << 1;
+  }
+  return crc;
+}
+
 void parseCRSF(uint8_t b) {
   if (crsfIdx == 0 && b != CRSF_ADDR_FC) return;
   crsfBuf[crsfIdx++] = b;
@@ -66,6 +77,11 @@ void parseCRSF(uint8_t b) {
   uint8_t frameLen = crsfBuf[1];
   if (frameLen > CRSF_MAX_PACKET - 2) { crsfIdx = 0; return; }
   if (crsfIdx < (uint8_t)(frameLen + 2)) return;
+  // Verify CRC before trusting any data.
+  // CRC covers bytes [type .. last payload byte]; CRC byte is at crsfBuf[frameLen+1].
+  if (crsfCRC8(&crsfBuf[2], frameLen - 1) != crsfBuf[frameLen + 1]) {
+    crsfIdx = 0; return;
+  }
   if (crsfBuf[2] == CRSF_FRAMETYPE_RC) {
     uint8_t *p = &crsfBuf[3];
     ch[0]  = ((p[0]       | p[1]  << 8) & 0x07FF);
@@ -105,13 +121,16 @@ void writeThrottle(float val) {
 // ═════════════════════════════════════════════════
 void setup() {
   Serial.begin(921600);
-  delay(5000);
+  // Do NOT delay here — a long blocking delay creates a ~6s reset loop
+  // because Arduino IDE serial monitor triggers a USB CDC reset on RP2040,
+  // then the sketch restarts and delays again indefinitely.
 
   Serial.println("Flying Wing — CH8 arm");
 
   Wire.setSDA(0);
   Wire.setSCL(1);
   Wire.begin();
+  Wire.setTimeout(5); // 5 ms timeout so I2C never stalls the loop
   BMI160.begin(BMI160GenClass::I2C_MODE, Wire, BMI160_ADDR);
   delay(300);
   Wire.beginTransmission(BMI160_ADDR);
@@ -132,6 +151,9 @@ void setup() {
   servoThrottle.writeMicroseconds(1000);
   servoL.writeMicroseconds(1500);
   servoR.writeMicroseconds(1500);
+  // Hold low throttle for 2s so the ESC can complete its arming sequence.
+  // This is safe because it is a short fixed delay, not a USB-triggered loop.
+  delay(2000);
   Serial.println("Servos OK");
   Serial.println("CH8 UP to arm (throttle low)");
 

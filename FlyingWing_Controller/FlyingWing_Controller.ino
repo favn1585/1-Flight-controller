@@ -35,13 +35,17 @@ struct PID {
   float kP, kI, kD;
   float integral  = 0;
   float lastError = 0;
+  float lastD     = 0;   // low-pass filtered derivative
   float iLimit;
+  // D-term LPF alpha ~0.45 → ~13 Hz cutoff at 100 Hz loop rate.
+  // Keeps enough phase margin for control while rejecting vibration noise.
   float compute(float error, float dt) {
     integral += error * dt;
     integral = constrain(integral, -iLimit, iLimit);
     float d = (error - lastError) / dt;
+    lastD = 0.36f * d + 0.64f * lastD;
     lastError = error;
-    return kP * error + kI * integral + kD * d;
+    return kP * error + kI * integral + kD * lastD;
   }
 };
 PID pidRoll  = {2.5f, 0.05f, 0.8f, 0, 0, 50.0f};
@@ -50,6 +54,10 @@ PID pidPitch = {2.5f, 0.05f, 0.8f, 0, 0, 50.0f};
 #define CF_ALPHA 0.95f
 float cfRoll  = 0.0f;
 float cfPitch = 0.0f;
+
+// Gyro low-pass filter state — alpha 0.7 → ~37 Hz cutoff at 100 Hz loop rate.
+// Rejects high-frequency vibration before it reaches the CF filter and D-term.
+float filtGX = 0.0f, filtGY = 0.0f;
 
 unsigned long lastLoop = 0;
 unsigned long lastLog  = 0;
@@ -182,6 +190,10 @@ void loop() {
   float gX = rawGX * 500.0f / 32768.0f;
   float gY = rawGY * 500.0f / 32768.0f;
 
+  // Gyro LPF — reject vibration noise before it reaches CF filter and D-term
+  filtGX = 0.76f * filtGX + 0.24f * gX;
+  filtGY = 0.76f * filtGY + 0.24f * gY;
+
   // Accel-only angle — stable reference when still
   float accelRoll  = atan2f(aY, aZ) * 180.0f / M_PI;
   float accelPitch = atan2f(-aX, sqrtf(aY*aY + aZ*aZ)) * 180.0f / M_PI;
@@ -189,8 +201,8 @@ void loop() {
   // Use lower alpha (0.8) so accel dominates more — stops gyro drift
   // causing wild pitch oscillation when sitting still
   const float alpha = 0.80f;
-  cfRoll  = alpha * (cfRoll  + gX * dt) + (1.0f - alpha) * accelRoll;
-  cfPitch = alpha * (cfPitch + gY * dt) + (1.0f - alpha) * accelPitch;
+  cfRoll  = alpha * (cfRoll  + filtGX * dt) + (1.0f - alpha) * accelRoll;
+  cfPitch = alpha * (cfPitch + filtGY * dt) + (1.0f - alpha) * accelPitch;
 
   // ── RC ────────────────────────────────────────
   // Log all 8 channels so we can identify which stick = which channel
@@ -217,14 +229,14 @@ void loop() {
     elevL = constrain(rcPitch + rcRoll, -1.0f, 1.0f);
     elevR = constrain(rcPitch - rcRoll, -1.0f, 1.0f);
     // Reset PID so no jolt when arming
-    pidRoll.integral  = 0; pidRoll.lastError  = 0;
-    pidPitch.integral = 0; pidPitch.lastError = 0;
+    pidRoll.integral  = 0; pidRoll.lastError  = 0; pidRoll.lastD  = 0;
+    pidPitch.integral = 0; pidPitch.lastError = 0; pidPitch.lastD = 0;
   }
 
   // Always output
   writeThrottle(rcThrottle);
-  writeServo(servoL,  elevL);
-  writeServo(servoR, -elevR);
+  writeServo(servoL, -elevL);
+  writeServo(servoR, elevR);
 
   // ── Log at 2 Hz — only if serial buffer has room ─
   if (millis() - lastLog >= 500 && Serial.availableForWrite() > 100) {

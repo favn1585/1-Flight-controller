@@ -231,8 +231,8 @@ void loop() {
     elevR = constrain(corrPitch + corrRoll,  -100.0f, 100.0f) / 100.0f;
   } else {
     // Pass-through — direct stick to elevons, no stabilisation
-    elevL = constrain(rcPitch + rcRoll, -1.0f, 1.0f);
-    elevR = constrain(rcPitch - rcRoll, -1.0f, 1.0f);
+    elevL = constrain(rcPitch - rcRoll, -1.0f, 1.0f);
+    elevR = constrain(rcPitch + rcRoll, -1.0f, 1.0f);
     // Reset PID so no jolt when arming
     pidRoll.integral  = 0; pidRoll.lastError  = 0; pidRoll.lastD  = 0;
     pidPitch.integral = 0; pidPitch.lastError = 0; pidPitch.lastD = 0;

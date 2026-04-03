@@ -51,6 +51,11 @@ struct PID {
 PID pidRoll  = {2.5f, 0.05f, 0.8f, 0, 0, 50.0f};
 PID pidPitch = {2.5f, 0.05f, 0.8f, 0, 0, 50.0f};
 
+// IMU mount offset — set these to the Roll/Pitch values reported in the log
+// when the plane is sitting level and still. Recompile and flash after changing.
+#define IMU_ROLL_OFFSET   (-6.8f)
+#define IMU_PITCH_OFFSET  ( 7.9f)
+
 #define CF_ALPHA 0.95f
 float cfRoll  = 0.0f;
 float cfPitch = 0.0f;
@@ -201,8 +206,8 @@ void loop() {
   // Use lower alpha (0.8) so accel dominates more — stops gyro drift
   // causing wild pitch oscillation when sitting still
   const float alpha = 0.80f;
-  cfRoll  = alpha * (cfRoll  + filtGX * dt) + (1.0f - alpha) * accelRoll;
-  cfPitch = alpha * (cfPitch + filtGY * dt) + (1.0f - alpha) * accelPitch;
+  cfRoll  = alpha * (cfRoll  + filtGX * dt) + (1.0f - alpha) * (accelRoll  - IMU_ROLL_OFFSET);
+  cfPitch = alpha * (cfPitch + filtGY * dt) + (1.0f - alpha) * (accelPitch - IMU_PITCH_OFFSET);
 
   // ── RC ────────────────────────────────────────
   // Log all 8 channels so we can identify which stick = which channel
@@ -222,8 +227,8 @@ void loop() {
     // Stabilised — PID corrects for attitude
     float corrRoll  = pidRoll.compute (rcRoll  * 30.0f - cfRoll,  dt);
     float corrPitch = pidPitch.compute(rcPitch * 30.0f - cfPitch, dt);
-    elevL = constrain(corrPitch + corrRoll,  -100.0f, 100.0f) / 100.0f;
-    elevR = constrain(corrPitch - corrRoll,  -100.0f, 100.0f) / 100.0f;
+    elevL = constrain(corrPitch - corrRoll,  -100.0f, 100.0f) / 100.0f;
+    elevR = constrain(corrPitch + corrRoll,  -100.0f, 100.0f) / 100.0f;
   } else {
     // Pass-through — direct stick to elevons, no stabilisation
     elevL = constrain(rcPitch + rcRoll, -1.0f, 1.0f);
